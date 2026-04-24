@@ -1,0 +1,25 @@
+# Training artifacts — large and reproducible from source
+data/
+sample_images/
+*.pt
+samples_step_*.png
+generated_*.png
+progressive_*.png
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
