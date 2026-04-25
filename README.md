@@ -132,19 +132,28 @@ Two consequences fall out of this rewrite:
 
 ### Measured speedup on this repo's checkpoint
 
-Same trained model (`checkpoint_step_4000.pt`), 16 samples on M4 MPS:
+Same trained model (`checkpoint_step_4000.pt`), 16 samples on M4 MPS,
+both samplers calling the *exact same network*:
 
-| Sampler | Steps | Wall-clock |
-| --- | --- | --- |
-| DDIM | 10 | **0.4 s** |
-| DDIM | 20 | 0.7 s |
-| DDIM | 50 | 1.7 s |
-| DDIM | 100 | 3.4 s |
-| DDPM | 500 | 17.2 s |
+| Sampler | Steps | Wall-clock | Speedup vs DDPM |
+| --- | --- | --- | --- |
+| DDIM | 10  | **0.3 s** | **57×** |
+| DDIM | 20  | 0.7 s | 24× |
+| DDIM | 50  | 1.7 s | 10× |
+| DDIM | 100 | 3.4 s | 5× |
+| DDPM | 500 | 17.0 s | 1× |
 
-DDIM at 50 steps is **~10× faster** than DDPM at 500 steps with
-visually similar output. See `comparison_DDIM_*steps.png` and
-`comparison_DDPM_500steps.png`.
+The speedup tracks the step-count ratio almost perfectly because both
+samplers do exactly one network forward per step — the only difference
+is *how many steps you take*. DDIM lets you spend less compute and
+still land near the same image, because at η=0 the sampler is just
+deterministically integrating along the same trajectory with a coarser
+step size.
+
+A 50-step DDIM sample looks visually similar to the 500-step DDPM
+sample on this checkpoint, while finishing in **a tenth of the time**.
+See `comparison_DDIM_*steps.png` and `comparison_DDPM_500steps.png`
+side by side.
 
 ### The consistency property (DDIM only, η=0)
 
