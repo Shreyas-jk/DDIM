@@ -1,9 +1,8 @@
-# DDIM (in progress) — CIFAR10 Diffusion from scratch
+# DDIM — CIFAR10 Diffusion from scratch
 
-A from-scratch PyTorch implementation built up piece by piece toward the
-DDIM paper (Song et al., 2020). Currently the noise schedule, U-Net, DDPM
-training loop, and DDPM sampler are implemented. The deterministic
-DDIM sampler (η=0, skip-step τ subsequence) is the remaining piece.
+A from-scratch PyTorch implementation of DDPM (Ho et al., 2020) and DDIM
+(Song et al., 2020). Same noise schedule, same U-Net, same training loss
+— two different samplers.
 
 ## Files
 
@@ -12,7 +11,8 @@ DDIM sampler (η=0, skip-step τ subsequence) is the remaining piece.
 | `noise_schedule.py` | Linear β schedule + precomputed constants. `add_noise` (DDPM Eq. 4) and `denoise_one_step` (DDPM Algorithm 2). |
 | `unet.py` | The ε-prediction network. Sinusoidal time embedding → residual blocks with time conditioning → self-attention at 16×16 and 4×4 → symmetric up path with skip connections. |
 | `train.py` | CIFAR10 training loop (DDPM Algorithm 1). Periodically generates sample grids and saves checkpoints. |
-| `sample.py` | Standalone generation from a trained checkpoint. Includes a progressive-generation mode that snapshots `x̂_0` estimates at regular timesteps (paper Fig. 6 style). |
+| `sample.py` | DDPM sampling. Markov-chain Algorithm 2 — `T` sequential network calls, stochastic noise injection per step. Includes a progressive-generation mode (paper Fig. 6 style). |
+| `ddim_sample.py` | DDIM sampling. Non-Markovian sampler: predicts `x̂_0`, jumps directly across a timestep subsequence. Includes step-count comparison, η sweep, and the consistency experiment. |
 
 ## Running it
 
@@ -20,13 +20,14 @@ DDIM sampler (η=0, skip-step τ subsequence) is the remaining piece.
 # Train (downloads CIFAR10 on first run, ~170 MB to ./data)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python train.py
 
-# Sample from a saved checkpoint (update CHECKPOINT_PATH in sample.py first)
+# DDPM sampling (slow, T steps)
 python sample.py
+
+# DDIM sampling (fast, configurable step count)
+python ddim_sample.py
 ```
 
-Outputs write to the current directory: `samples_step_*.png`,
-`checkpoint_step_*.pt`, and for sampling, `generated_samples.png` /
-`generated_final.png` / `progressive_generation.png`.
+Outputs write to the current directory.
 
 Device detection order: **CUDA → MPS → CPU**. `cudnn.benchmark` and
 `pin_memory` only flip on when CUDA is actually available.
@@ -91,15 +92,82 @@ For paper-quality samples, you need to flip the config back
 (`BASE_CHANNELS=128`, `T=1000`, `BATCH_SIZE=128`) and run on a real
 GPU. On an A100 that's ~13 hours for 800k steps; on a 4090 ~18 hours.
 
+## DDIM vs DDPM — what actually differs
+
+**Training is identical.** Both samplers use the *same trained model*,
+trained with the *same DDPM loss* (`F.mse_loss(noise, model(x_t, t))`).
+DDIM does not need its own training run. The two methods only diverge
+at sampling time.
+
+### Sampling step formulas
+
+DDPM's reverse step uses a fixed Markov chain — at every timestep `t`
+you take one small step toward `t-1`, with stochastic noise injected:
+
+```
+x_{t-1} = (1/√α_t) · (x_t − (β_t / √(1−ᾱ_t)) · ε_θ) + σ_t · z
+σ_t = √β_t,    z ~ N(0, I)
+```
+
+DDIM rewrites this as a non-Markovian sampler. At each step you (1)
+predict the clean image `x̂_0` directly, then (2) re-noise it back to
+some target timestep `t_prev` along the deterministic direction:
+
+```
+x̂_0       = (x_t − √(1−ᾱ_t) · ε_θ) / √ᾱ_t
+σ_t       = η · √( (1−ᾱ_{t_prev}) / (1−ᾱ_t) · (1 − ᾱ_t / ᾱ_{t_prev}) )
+direction = √(1 − ᾱ_{t_prev} − σ_t²) · ε_θ
+x_{t_prev} = √ᾱ_{t_prev} · x̂_0 + direction + σ_t · z
+```
+
+Two consequences fall out of this rewrite:
+
+1. **`t_prev` doesn't have to be `t − 1`.** You can pick any decreasing
+   subsequence of timesteps. Sampling in 50 steps instead of `T=500`
+   skips 90% of network forwards.
+2. **`η` interpolates between the two regimes.** `η=0` zeroes the
+   stochastic term and the sampler becomes fully deterministic — same
+   `x_T` always produces the same `x_0`. `η=1` reproduces a DDPM-like
+   stochastic step.
+
+### Measured speedup on this repo's checkpoint
+
+Same trained model (`checkpoint_step_4000.pt`), 16 samples on M4 MPS:
+
+| Sampler | Steps | Wall-clock |
+| --- | --- | --- |
+| DDIM | 10 | **0.4 s** |
+| DDIM | 20 | 0.7 s |
+| DDIM | 50 | 1.7 s |
+| DDIM | 100 | 3.4 s |
+| DDPM | 500 | 17.2 s |
+
+DDIM at 50 steps is **~10× faster** than DDPM at 500 steps with
+visually similar output. See `comparison_DDIM_*steps.png` and
+`comparison_DDPM_500steps.png`.
+
+### The consistency property (DDIM only, η=0)
+
+With η=0, DDIM is a deterministic function of `x_T`. The same starting
+noise produces samples with the same high-level structure regardless
+of how many timesteps you use — only fine detail changes as the step
+count grows. `consistency_experiment` in `ddim_sample.py` writes
+`consistency_{10,20,50,100,200}steps.png` from a fixed seed; the four
+images per file should look like the same scene at increasing
+resolution. **DDPM doesn't have this property** because its per-step
+stochastic noise re-randomizes the trajectory.
+
+### The η sweep
+
+`compare_eta` writes `eta_{0.00,0.25,0.50,0.75,1.00}.png` from a fixed
+starting noise. At η=0 the four images per file are locked to the
+seed; as η grows they drift further apart. By η=1 you've recovered
+DDPM-like stochasticity and the structural correspondence is mostly
+gone.
+
 ## What's not implemented yet
 
-- The **DDIM sampler** (the whole reason the repo is named this).
-  The current `sample.py` runs DDPM's Markov-chain Algorithm 2 — 500
-  sequential network calls, stochastic noise injection at each step.
-  DDIM's contribution is the non-Markovian deterministic sampler
-  `x_{t-1} = √ᾱ_{t-1}·x̂_0 + √(1−ᾱ_{t-1}−σ²)·ε_θ + σ·z` (η=0 is
-  fully deterministic) that can skip timesteps — e.g., sample in 50
-  network calls instead of 500 with minimal quality loss.
-- **EMA of weights** (pseudocode hook exists in `train.py`).
+- **EMA of weights** (pseudocode hook exists in `train.py`). Adds
+  visible quality at no extra training cost.
 - **Checkpoint resume** in `train.py` — right now every run starts
   from step 0.
