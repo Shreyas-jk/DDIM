@@ -137,11 +137,11 @@ both samplers calling the *exact same network*:
 
 | Sampler | Steps | Wall-clock | Speedup vs DDPM |
 | --- | --- | --- | --- |
-| DDIM | 10  | **0.3 s** | **57×** |
-| DDIM | 20  | 0.7 s | 24× |
+| DDIM | 10  | **0.3 s** | **49×** |
+| DDIM | 20  | 0.7 s | 25× |
 | DDIM | 50  | 1.7 s | 10× |
 | DDIM | 100 | 3.4 s | 5× |
-| DDPM | 500 | 17.0 s | 1× |
+| DDPM | 500 | 16.8 s | 1× |
 
 The speedup tracks the step-count ratio almost perfectly because both
 samplers do exactly one network forward per step — the only difference
@@ -152,8 +152,14 @@ step size.
 
 A 50-step DDIM sample looks visually similar to the 500-step DDPM
 sample on this checkpoint, while finishing in **a tenth of the time**.
-See `comparison_DDIM_*steps.png` and `comparison_DDPM_500steps.png`
-side by side.
+
+| DDPM, 500 steps (16.8 s) | DDIM, 50 steps (1.7 s) |
+| --- | --- |
+| ![DDPM 500 steps](comparison_DDPM_500steps.png) | ![DDIM 50 steps](comparison_DDIM_50steps.png) |
+
+Both grids are 16 samples from the same checkpoint. The DDIM grid is
+generated from a fixed `x_T` seed and uses η=0; the DDPM grid uses the
+stochastic Markov-chain sampler in `sample.py`.
 
 ### The consistency property (DDIM only, η=0)
 
@@ -161,18 +167,25 @@ With η=0, DDIM is a deterministic function of `x_T`. The same starting
 noise produces samples with the same high-level structure regardless
 of how many timesteps you use — only fine detail changes as the step
 count grows. `consistency_experiment` in `ddim_sample.py` writes
-`consistency_{10,20,50,100,200}steps.png` from a fixed seed; the four
-images per file should look like the same scene at increasing
-resolution. **DDPM doesn't have this property** because its per-step
-stochastic noise re-randomizes the trajectory.
+`consistency_{10,20,50,100,200}steps.png` from a fixed seed; rows
+should look like the same scene at increasing resolution. **DDPM
+doesn't have this property** because its per-step stochastic noise
+re-randomizes the trajectory.
+
+| 10 steps | 20 steps | 50 steps | 100 steps | 200 steps |
+| --- | --- | --- | --- | --- |
+| ![10](consistency_10steps.png) | ![20](consistency_20steps.png) | ![50](consistency_50steps.png) | ![100](consistency_100steps.png) | ![200](consistency_200steps.png) |
 
 ### The η sweep
 
 `compare_eta` writes `eta_{0.00,0.25,0.50,0.75,1.00}.png` from a fixed
-starting noise. At η=0 the four images per file are locked to the
-seed; as η grows they drift further apart. By η=1 you've recovered
-DDPM-like stochasticity and the structural correspondence is mostly
-gone.
+starting noise. At η=0 the images are locked to the seed; as η grows
+they drift further apart. By η=1 you've recovered DDPM-like
+stochasticity and the structural correspondence is mostly gone.
+
+| η = 0.00 | η = 0.25 | η = 0.50 | η = 0.75 | η = 1.00 |
+| --- | --- | --- | --- | --- |
+| ![0.00](eta_0.00.png) | ![0.25](eta_0.25.png) | ![0.50](eta_0.50.png) | ![0.75](eta_0.75.png) | ![1.00](eta_1.00.png) |
 
 ## What's not implemented yet
 
