@@ -12,7 +12,7 @@ from unet import UNet
 # Must match the values used during training.
 T = 500
 BASE_CHANNELS = 64
-CHECKPOINT_PATH = "checkpoint_step_2000.pt"
+CHECKPOINT_PATH = "checkpoint_step_4000.pt"
 NUM_SAMPLES = 16
 
 

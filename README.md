@@ -27,6 +27,10 @@ python sample.py
 python ddim_sample.py
 ```
 
+Both samplers load `checkpoint_step_4000.pt`, which is gitignored and not
+part of the clone — run `train.py` first (it writes a checkpoint every 2000
+steps) or point `CHECKPOINT_PATH` at your own.
+
 Outputs write to the current directory.
 
 Device detection order: **CUDA → MPS → CPU**. `cudnn.benchmark` and
