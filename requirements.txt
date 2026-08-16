@@ -1,3 +1,8 @@
 torch
 torchvision
 pytest
+
+# FID sweep (fid_sweep.py / fid_report.py)
+numpy
+scipy
+pytorch-fid
