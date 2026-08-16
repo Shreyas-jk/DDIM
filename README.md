@@ -156,6 +156,14 @@ step size.
 
 A 50-step DDIM sample looks visually similar to the 500-step DDPM
 sample on this checkpoint, while finishing in **a tenth of the time**.
+FID backs this up: 87.98 vs 89.40, a gap of 1.42 that sits below the
+measured 3.15 noise floor, so the two are not distinguishable at this
+sample count.
+
+These are wall-clock ratios at a *fixed step count*, not quality-matched
+numbers — the column says how much less compute DDIM spends, not that
+the samples are equally good. For the speedup at **equal FID**, which is
+10×, see [Sample quality](#sample-quality-fid).
 
 | DDPM, 500 steps (16.8 s) | DDIM, 50 steps (1.7 s) |
 | --- | --- |
@@ -172,13 +180,20 @@ noise produces samples with the same high-level structure regardless
 of how many timesteps you use — only fine detail changes as the step
 count grows. `consistency_experiment` in `ddim_sample.py` writes
 `consistency_{10,20,50,100,200}steps.png` from a fixed seed; rows
-should look like the same scene at increasing resolution. **DDPM
-doesn't have this property** because its per-step stochastic noise
-re-randomizes the trajectory.
+should look like the same scene resolved in progressively finer
+detail. **DDPM doesn't have this property** because its per-step
+stochastic noise re-randomizes the trajectory.
 
 | 10 steps | 20 steps | 50 steps | 100 steps | 200 steps |
 | --- | --- | --- | --- | --- |
 | ![10](consistency_10steps.png) | ![20](consistency_20steps.png) | ![50](consistency_50steps.png) | ![100](consistency_100steps.png) | ![200](consistency_200steps.png) |
+
+All five panels: `checkpoint_step_4000.pt`, η=0, 16 samples from one fixed
+`x_T` (seed 42), uniform subsequences of `T=500`. **Finer detail is not
+better distribution match here** — on this checkpoint DDIM's FID gets
+monotonically *worse* as the step count grows (82.8 at 10 steps → 97.4 at
+500; see [Sample quality](#sample-quality-fid)). Read these rows as
+evidence of trajectory consistency, not of quality improving rightward.
 
 ### The η sweep
 
@@ -191,9 +206,73 @@ stochasticity and the structural correspondence is mostly gone.
 | --- | --- | --- | --- | --- |
 | ![0.00](eta_0.00.png) | ![0.25](eta_0.25.png) | ![0.50](eta_0.50.png) | ![0.75](eta_0.75.png) | ![1.00](eta_1.00.png) |
 
+All five panels: `checkpoint_step_4000.pt`, 50 steps, 16 samples from one
+fixed `x_T` (seed 42). This figure is about *seed sensitivity*, not
+quality — it says nothing about which η produces better samples. For that,
+see [Sample quality](#sample-quality-fid).
+
 ## What's not implemented yet
 
 - **EMA of weights** (pseudocode hook exists in `train.py`). Adds
   visible quality at no extra training cost.
 - **Checkpoint resume** in `train.py` — right now every run starts
   from step 0.
+
+## Sample quality (FID)
+
+The wall-clock table above says DDIM is cheaper. It says nothing about
+whether the cheap samples are *good*. `fid_sweep.py` measures that, and
+`fid_report.py` renders the tables below.
+
+**Setup.** 10,000 samples per config, all 12 configs drawing from one
+shared seeded `x_T` pool (seed 1234) so the curves are paired and any
+difference is the sampler rather than the noise draw. Features are
+pytorch-fid's TF-ported InceptionV3 pool3 activations (2048-d), scored
+against CIFAR-10 train (50,000 images). **Absolute values here are not
+comparable to published CIFAR-10 FID**, which is normally reported at
+50,000 samples — at 10,000 the small-sample bias alone is 3.15 FID, and
+this checkpoint is deliberately undertrained (4,000 steps, `T=500`,
+`base_channels=64`) rather than the paper's ~800k.
+
+| steps | DDIM (η=0) | DDPM (η=1) | DDPM − DDIM |
+| ---: | ---: | ---: | ---: |
+| 10  | **82.84** | 102.28 | +19.44 |
+| 20  | 84.64 | 93.72 | +9.08 |
+| 50  | 87.98 | 90.10 | +2.12 *(< floor)* |
+| 100 | 89.08 | **89.25** | +0.17 *(< floor)* |
+| 200 | 90.16 | 89.42 | −0.74 *(< floor)* |
+| 500 | 97.45 | 89.40 | −8.04 |
+
+**Measured noise floor: 3.15 FID.** Computed real-vs-real — CIFAR-10 test
+(disjoint from the reference) scored against train-50k, where the true FID
+is 0. Differences smaller than this are not distinguishable from
+small-sample noise, which is why three rows above are marked. The bias is
+steep at small N and worth knowing before trusting any FID at this scale:
+
+| N | 1,000 | 2,500 | 5,000 | 10,000 |
+| --- | ---: | ---: | ---: | ---: |
+| real-vs-real FID | 30.43 | 11.55 | 5.85 | 3.15 |
+
+**The surprise: DDIM degrades with more steps here** (best at 10 steps,
+worst at 500), while DDPM improves and then plateaus. That inverts the
+usual more-compute-is-better intuition and is a property of this
+undertrained checkpoint, not of DDIM in general — a coarse subsequence
+skips the high-`t` region where this ε-network is least accurate, so
+taking fewer steps accumulates less of its error.
+
+**Matched-quality speedup: 10×.** DDIM reaches DDPM's best FID (89.25) in
+10 steps; DDPM needs 100. Reported at equal FID rather than equal step
+count, which is the only comparison that controls for quality:
+
+| target FID | DDIM steps | DDPM steps | speedup |
+| ---: | ---: | ---: | ---: |
+| 89.25 | 10.0 | 100.0 | **10.00×** |
+| 91.30 | 10.0 | 36.9 | 3.69× |
+| 93.35 | 10.0 | 22.0 | 2.20× |
+| 95.40 | 10.0 | 17.5 | 1.75× |
+| 97.45 | 10.0 | 14.8 | 1.48× |
+
+Sweep cost: 17,600,000 network forwards in 6.25 h on an M4 (MPS), 782
+forwards/s mean. Reproduce with `python fid_sweep.py && python
+fid_report.py` (needs a trained checkpoint and `pytorch-fid`; the ~900 MB
+Inception feature caches are gitignored and regenerate on first run).

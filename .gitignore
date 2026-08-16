@@ -10,6 +10,13 @@ progressive_*.png
 # Documentation outputs (referenced inline by README.md) ARE tracked:
 # ddim_samples.png, comparison_*.png, eta_*.png, consistency_*.png
 
+# FID sweep artifacts (fid_sweep.py) — caches are ~900 MB, regenerable
+fid_cache_*.npy
+fid_sweep.log
+# fid_results.json IS tracked: 4.7 KB, and it's the raw evidence behind the
+# FID tables in README.md. Regenerating it is a 6.25-hour sweep, not a cache
+# rebuild, so it ships with the repo.
+
 # Python
 __pycache__/
 *.py[cod]
